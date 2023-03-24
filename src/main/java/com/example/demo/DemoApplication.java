@@ -13,18 +13,19 @@ import sun.misc.Unsafe;
 import java.lang.foreign.MemorySegment;
 
 import java.lang.foreign.SegmentScope;
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.lang.reflect.Field;
 import java.util.concurrent.TimeUnit;
 
 import static java.lang.foreign.ValueLayout.JAVA_INT;
 
-@State(Scope.Benchmark)
+@State(Scope.Thread)
 @BenchmarkMode(Mode.Throughput)
 @Warmup(iterations = 100,time = 100, timeUnit = TimeUnit.MILLISECONDS)
-@Measurement(iterations = 10,time = 1, timeUnit = TimeUnit.SECONDS)
+@Measurement(iterations = 100,time = 100, timeUnit = TimeUnit.MILLISECONDS)
 @Threads(8)
-@Fork(2)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 public class DemoApplication {
 
@@ -32,7 +33,11 @@ public class DemoApplication {
       public int count = 0;
    }
 
-   VarHandle counterVarHandler;
+   public static final VarHandle  segmentVarHandler = JAVA_INT.varHandle();
+
+   public static final VarHandle counterVarHandler;
+
+   public static final Field countField;
 
    Unsafe unsafe;
 
@@ -44,6 +49,8 @@ public class DemoApplication {
 
    Counter counter3;
 
+   Counter counter4;
+
    MemorySegment segmentNative;
 
    MemorySegment segmentHeap;
@@ -53,6 +60,7 @@ public class DemoApplication {
       counter1 = new Counter();
       counter2 = new Counter();
       counter3 = new Counter();
+      counter4 = new Counter();
 
 
       Field theUnsafeF = Unsafe.class.getDeclaredField("theUnsafe");
@@ -60,34 +68,60 @@ public class DemoApplication {
       unsafe = ((Unsafe) theUnsafeF.get(null));
       offset = unsafe.objectFieldOffset(Counter.class.getDeclaredField("count"));
 
-      counterVarHandler = JAVA_INT.varHandle();
+
       segmentNative  = MemorySegment.allocateNative(JAVA_INT, SegmentScope.global());
       segmentHeap = MemorySegment.ofArray(new int[1]);
+
+
+   }
+   static {
+      try {
+         counterVarHandler = MethodHandles.lookup()
+                 .findVarHandle(Counter.class, "count", int.class);
+
+         countField  = Counter.class.getDeclaredField("count");
+         countField.setAccessible(true);
+      } catch (NoSuchFieldException e) {
+         throw new RuntimeException(e);
+      } catch (IllegalAccessException e) {
+         throw new RuntimeException(e);
+      }
    }
 
 
 
    @Benchmark
    public void testVarhandlerGetterNative(Blackhole blackhole) {
-      Object o = counterVarHandler.get(segmentNative);
+      int o = (int)segmentVarHandler.get(segmentNative);
       blackhole.consume(o);
    }
 
    @Benchmark
    public void testVarhandlerGetterHeap(Blackhole blackhole) {
-      Object o = counterVarHandler.get(segmentHeap);
+      int o = (int)segmentVarHandler.get(segmentHeap);
+      blackhole.consume(o);
+   }
+
+   @Benchmark
+   public void testVarhandlerGetter(Blackhole blackhole) {
+      int o = (int)counterVarHandler.get(counter1);
       blackhole.consume(o);
    }
 
    @Benchmark
    public void testUnsafeGetter(Blackhole blackhole) {
-      Object object = unsafe.getObject(counter2, offset);
+      int object = unsafe.getInt(counter2, offset);
       blackhole.consume(object);
    }
 
    @Benchmark
    public void testNormalGetter(Blackhole blackhole) {
       blackhole.consume(counter3.count);
+   }
+
+   @Benchmark
+   public void testRelectionGetter(Blackhole blackhole) throws IllegalAccessException {
+      blackhole.consume(countField.get(counter4));
    }
 
 
